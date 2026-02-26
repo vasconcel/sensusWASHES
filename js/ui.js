@@ -1,39 +1,41 @@
 /**
- * sensus-WASHES | UI Orchestrator (v2.0)
- * Responsabilidade: Gerenciar o fluxo científico de busca, triagem e exportação.
- * Padrão: Metodologia SLR/MLR Auditável.
+ * sensus-WASHES | UI Orchestrator (v3.0 - Scopus Paradigm)
+ * Responsabilidade: Motor de Busca Científica, Seleção em Massa e Exportação.
+ * Foco: Alta densidade de informação e reprodutibilidade científica.
  */
 
 import { API } from './api.js';
 import { buildPredicate } from './parser.js';
 
-// --- 1. Estado Global da Aplicação (Single Source of Truth) ---
+// --- 1. Estado Global da Aplicação ---
 const store = {
-    corpus: [],          // Base carregada via API (Filtros de Edição/Ano)
-    filtered: [],        // Artigos que passaram pela string booleana
-    decisions: {},       // { [id]: 'IC' | 'EC' } - Persistido no LocalStorage
-    currentTerms: [],    // Termos extraídos para o Highlighter
+    corpus: [],          // Base total carregada via API (conforme filtros)
+    filtered: [],        // Subconjunto após processamento booleano
+    selected: {},        // { [id]: true } - Itens marcados para exportação
+    currentTerms: [],    // Termos para o Highlighter
     editions: []         // Cache de edições para a Sidebar
 };
 
 // --- 2. Cache de Elementos DOM ---
 const dom = {
-    // Pesquisa
+    // Busca
     searchInput: document.getElementById('searchInput'),
     searchBtn: document.getElementById('searchBtn'),
     // Filtros
     editionFilter: document.getElementById('editionFilter'),
     yearFilter: document.getElementById('yearFilter'),
     applyFiltersBtn: document.getElementById('applyFiltersBtn'),
-    // Resultados e Status
+    // Interface
     resultsContainer: document.getElementById('resultsContainer'),
+    resultsToolbar: document.getElementById('resultsToolbar'),
+    selectAllCheckbox: document.getElementById('selectAllCheckbox'),
+    selectAllText: document.getElementById('selectAllText'),
     statusBox: document.getElementById('statusBox'),
     errorBox: document.getElementById('errorBox'),
-    // Estatísticas (PRISMA Logic)
+    // Métricas (Sidebar)
     statTotal: document.getElementById('stat-total'),
     statFiltered: document.getElementById('stat-filtered'),
-    statIncluded: document.getElementById('stat-included'),
-    statExcluded: document.getElementById('stat-excluded'),
+    statSelected: document.getElementById('stat-included'), // Reutilizando ID do HTML
     // Exportação
     exportJsonBtn: document.getElementById('exportJsonBtn'),
     exportCsvBtn: document.getElementById('exportCsvBtn')
@@ -41,22 +43,22 @@ const dom = {
 
 // --- 3. Inicialização ---
 document.addEventListener('DOMContentLoaded', async () => {
-    loadDecisions();
+    loadSelection();
     setupEventListeners();
     
     try {
-        updateStatus('Sincronizando metadados da API...');
+        updateStatus('Sincronizando metadados...');
         
-        // Carrega edições para os filtros da sidebar
+        // Carrega edições para os filtros
         store.editions = await API.editions.listAll();
         populateFilterSelectors();
 
-        // Carregamento inicial silencioso (Background)
+        // Sincronização inicial silenciosa
         await syncDataWithAPI(true); 
         
-        updateStatus('Pronto. Insira uma string de busca para iniciar a triagem.');
+        updateStatus('Sistema pronto.');
     } catch (err) {
-        showError(`Erro na inicialização: ${err.message}`);
+        showError(`Falha na inicialização: ${err.message}`);
     }
 });
 
@@ -64,7 +66,7 @@ function setupEventListeners() {
     dom.searchBtn.onclick = handleSearch;
     dom.applyFiltersBtn.onclick = () => syncDataWithAPI(false);
     
-    // Atalho: Enter executa a busca
+    // Suporte a busca via Enter
     dom.searchInput.onkeydown = (e) => {
         if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
@@ -76,52 +78,68 @@ function setupEventListeners() {
     dom.exportCsvBtn.onclick = exportCSV;
 }
 
-// --- 4. Sincronização e Filtros da API ---
+// --- 4. Sincronização e Normalização de Dados ---
 
 async function syncDataWithAPI(isInitial = false) {
     const year = dom.yearFilter.value;
     const editionId = dom.editionFilter.value;
     
     clearError();
-    updateStatus('Atualizando corpus científico...');
+    updateStatus('Atualizando acervo...');
 
     try {
         let rawData;
-        if (year !== 'all') {
-            rawData = await API.papers.getByYear(year);
-        } else if (editionId !== 'all') {
-            rawData = await API.editions.getPapers(editionId);
-        } else {
-            rawData = await API.papers.getAll();
-        }
+        if (year !== 'all') rawData = await API.papers.getByYear(year);
+        else if (editionId !== 'all') rawData = await API.editions.getPapers(editionId);
+        else rawData = await API.papers.getAll();
 
+        // Normalização Blindada: Resolve problemas de Case e Nomes de Campos da API
         store.corpus = normalizeData(rawData);
         updateStats();
 
-        // Se não for o carregamento inicial, tenta re-aplicar a busca booleana
-        if (!isInitial) {
-            handleSearch();
-        } else {
-            renderEmptyState();
-        }
+        if (!isInitial) handleSearch();
+        else renderEmptyState();
 
     } catch (err) {
         showError(`Erro ao sincronizar dados: ${err.message}`);
     }
 }
 
-function populateFilterSelectors() {
-    // Ordenar edições da mais recente para a mais antiga
-    const sortedEditions = [...store.editions].sort((a, b) => (b.Year || 0) - (a.Year || 0));
+function normalizeData(data) {
+    if (!Array.isArray(data)) return [];
     
+    // Função auxiliar para busca insensível a maiúsculas
+    const getField = (obj, aliases) => {
+        const keys = Object.keys(obj);
+        for (let alias of aliases) {
+            const found = keys.find(k => k.toLowerCase() === alias.toLowerCase());
+            if (found && obj[found] !== null && obj[found] !== undefined) return obj[found];
+        }
+        return null;
+    };
+
+    return data.map(p => ({
+        id: String(getField(p, ['Paper_id', 'paper_id', 'id']) ?? 'N/A'),
+        title: getField(p, ['Title', 'title', 'paper_title']) ?? 'Título não identificado',
+        abstract: getField(p, ['Abstract', 'abstract', 'Resumo', 'resumo']) ?? 'Resumo indisponível.',
+        year: getField(p, ['Year', 'year', 'edition_year']) ?? 'N/A',
+        link: getField(p, ['Download_link', 'download_link', 'url']) ?? '',
+        authors: getField(p, ['Authors', 'authors', 'Author']) ?? [],
+        keywords: getField(p, ['Keywords', 'keywords', 'Palavras-chave']) ?? '',
+        type: getField(p, ['Type', 'type', 'Tipo']) ?? 'Conference Paper',
+        language: getField(p, ['Language', 'language', 'Idioma']) ?? 'Portuguese'
+    }));
+}
+
+function populateFilterSelectors() {
+    // Limpa e popula Edições
+    const sortedEditions = [...store.editions].sort((a, b) => (b.Year || 0) - (a.Year || 0));
     sortedEditions.forEach(ed => {
         const label = ed.Year ? `${ed.Edition_id} (${ed.Year})` : `Edição ${ed.Edition_id}`;
         dom.editionFilter.add(new Option(label, ed.Edition_id));
     });
-
-    for (let y = 2025; y >= 2016; y--) {
-        dom.yearFilter.add(new Option(y, y));
-    }
+    // Popular Anos
+    for (let y = 2025; y >= 2016; y--) dom.yearFilter.add(new Option(y, y));
 }
 
 // --- 5. Motor de Busca e Highlighting ---
@@ -134,23 +152,22 @@ function handleSearch() {
         store.filtered = [];
         store.currentTerms = [];
         renderEmptyState();
-        updateStatus('Aguardando query de busca...');
+        updateStatus('Aguardando busca...');
         return;
     }
 
     try {
         const { predicate, terms } = buildPredicate(query);
         store.currentTerms = terms;
-        
         store.filtered = store.corpus.filter(paper => 
             predicate(`${paper.title} ${paper.abstract}`)
         );
 
         renderResults();
         updateStats();
-        updateStatus(`Busca finalizada: ${store.filtered.length} resultados.`);
+        updateStatus(`${store.filtered.length} resultados encontrados.`);
     } catch (err) {
-        showError(`Erro de Sintaxe Booleana: ${err.message}`);
+        showError(`Sintaxe: ${err.message}`);
     }
 }
 
@@ -168,40 +185,46 @@ function highlightText(text, terms) {
     return result;
 }
 
-// --- 6. Renderização de Resultados (High-Density UI) ---
+// --- 6. Renderização e Toolbar ---
 
 function renderResults() {
     dom.resultsContainer.innerHTML = '';
 
     if (store.filtered.length === 0) {
-        dom.resultsContainer.innerHTML = `<p class="text-center py-10 text-slate-500 text-sm italic">Nenhum artigo corresponde aos critérios booleanos neste filtro.</p>`;
+        dom.resultsToolbar.classList.add('hidden');
+        dom.resultsContainer.innerHTML = `<p class="text-center py-10 text-slate-500 text-sm italic">Nenhum documento satisfaz os critérios.</p>`;
         return;
     }
 
-    store.filtered.forEach(paper => {
-        const decision = store.decisions[paper.id];
-        const card = document.createElement('article');
-        
-        card.className = `paper-card ${decision === 'IC' ? 'paper-included' : ''} ${decision === 'EC' ? 'paper-excluded' : ''}`;
-        
-        const hTitle = highlightText(paper.title, store.currentTerms);
-        const hAbstract = highlightText(paper.abstract, store.currentTerms);
+    // Gerenciar Toolbar de Seleção em Massa
+    dom.resultsToolbar.classList.remove('hidden');
+    const allVisibleIds = store.filtered.map(p => String(p.id));
+    const isAllSelected = allVisibleIds.length > 0 && allVisibleIds.every(id => store.selected[id]);
+    dom.selectAllCheckbox.checked = isAllSelected;
+    dom.selectAllText.textContent = isAllSelected ? "Desmarcar todos os resultados" : `Selecionar todos os ${store.filtered.length} resultados`;
 
+    store.filtered.forEach(paper => {
+        const isSelected = store.selected[paper.id];
+        const card = document.createElement('article');
+        card.id = `card-${paper.id}`;
+        card.className = `paper-card transition-all duration-200 ${isSelected ? 'ring-2 ring-sky-500 bg-sky-50/30 shadow-md' : ''}`;
+        
         card.innerHTML = `
-            <div class="paper-meta">
-                <span><strong>ID:</strong> #${paper.id}</span>
-                <span><strong>ANO:</strong> ${paper.year}</span>
-                ${paper.link ? `<a href="${paper.link}" target="_blank" class="hover:underline">SOL ↗</a>` : ''}
+            <div class="paper-meta flex justify-between">
+                <div>
+                    <span><strong>ID:</strong> #${paper.id}</span>
+                    <span class="ml-3"><strong>ANO:</strong> ${paper.year}</span>
+                </div>
+                ${paper.link ? `<a href="${paper.link}" target="_blank" class="text-sky-600 hover:underline font-medium">SBC OpenLib ↗</a>` : ''}
             </div>
-            <h2 class="paper-title">${hTitle}</h2>
-            <p class="paper-abstract">${hAbstract}</p>
-            <div class="paper-actions">
-                <button class="btn-action btn-ic ${decision === 'IC' ? 'active' : ''}" onclick="window.updateDecision('${paper.id}', 'IC')">
-                    ${decision === 'IC' ? '✓ Incluído' : 'Incluir (IC)'}
-                </button>
-                <button class="btn-action btn-ec ${decision === 'EC' ? 'active' : ''}" onclick="window.updateDecision('${paper.id}', 'EC')">
-                    ${decision === 'EC' ? '✕ Excluído' : 'Excluir (EC)'}
-                </button>
+            <h2 class="paper-title mt-2 mb-2">${highlightText(paper.title, store.currentTerms)}</h2>
+            <p class="paper-abstract">${highlightText(paper.abstract, store.currentTerms)}</p>
+            <div class="mt-4 pt-3 border-t border-slate-100 flex items-center gap-2">
+                <input type="checkbox" id="check-${paper.id}" class="w-4 h-4 text-sky-600 rounded border-slate-300 focus:ring-sky-500 cursor-pointer" 
+                       onchange="window.toggleSelection('${paper.id}')" ${isSelected ? 'checked' : ''}>
+                <label for="check-${paper.id}" class="text-xs font-semibold text-slate-700 cursor-pointer select-none">
+                    Selecionar para Exportação
+                </label>
             </div>
         `;
         dom.resultsContainer.appendChild(card);
@@ -209,121 +232,128 @@ function renderResults() {
 }
 
 function renderEmptyState() {
+    dom.resultsToolbar.classList.add('hidden');
     dom.resultsContainer.innerHTML = `
         <div class="flex flex-col items-center justify-center py-20 text-slate-400">
             <svg class="w-12 h-12 mb-4 opacity-20" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
             </svg>
-            <p class="text-sm italic">Aguardando string de busca para triagem científica...</p>
+            <p class="text-sm italic">Aguardando string de busca...</p>
         </div>`;
 }
 
-// --- 7. Utilitários de Normalização Blindada ---
+// --- 7. Lógica de Seleção ---
 
-function getField(obj, aliases) {
-    const keys = Object.keys(obj);
-    for (let alias of aliases) {
-        const found = keys.find(k => k.toLowerCase() === alias.toLowerCase());
-        if (found && obj[found] !== null && obj[found] !== undefined) return obj[found];
+window.toggleSelection = (id) => {
+    id = String(id);
+    if (store.selected[id]) delete store.selected[id];
+    else store.selected[id] = true;
+
+    // Atualização visual reativa (sem re-render total)
+    const card = document.getElementById(`card-${id}`);
+    if (card) {
+        if (store.selected[id]) card.classList.add('ring-2', 'ring-sky-500', 'bg-sky-50/30', 'shadow-md');
+        else card.classList.remove('ring-2', 'ring-sky-500', 'bg-sky-50/30', 'shadow-md');
     }
-    return null;
-}
+    
+    // Atualiza o checkbox de "Selecionar Todos" conforme a mudança individual
+    const allVisibleIds = store.filtered.map(p => String(p.id));
+    dom.selectAllCheckbox.checked = allVisibleIds.every(id => store.selected[id]);
 
-function normalizeData(data) {
-    if (!Array.isArray(data)) return [];
-    return data.map(p => ({
-        id: getField(p, ['Paper_id', 'paper_id', 'id']) ?? 'N/A',
-        title: getField(p, ['Title', 'title', 'paper_title']) ?? 'Título não identificado',
-        abstract: getField(p, ['Abstract', 'abstract', 'Resumo', 'resumo']) ?? 'Resumo indisponível.',
-        year: getField(p, ['Year', 'year', 'edition_year']) ?? 'N/A',
-        link: getField(p, ['Download_link', 'download_link', 'url']),
-        authors: getField(p, ['Authors', 'authors', 'Author'])
-    }));
-}
+    saveSelection();
+    updateStats();
+};
 
-// --- 8. Persistência e Decisões ---
+window.toggleSelectAll = () => {
+    if (store.filtered.length === 0) return;
+    const allVisibleIds = store.filtered.map(p => String(p.id));
+    const isAllSelected = allVisibleIds.every(id => store.selected[id]);
 
-window.updateDecision = (id, type) => {
-    if (store.decisions[id] === type) {
-        delete store.decisions[id];
+    if (isAllSelected) {
+        allVisibleIds.forEach(id => delete store.selected[id]);
     } else {
-        store.decisions[id] = type;
+        allVisibleIds.forEach(id => store.selected[id] = true);
     }
-    saveDecisions();
+
+    saveSelection();
     renderResults();
     updateStats();
 };
 
-function updateStats() {
-    dom.statTotal.textContent = store.corpus.length;
-    dom.statFiltered.textContent = store.filtered.length;
-    const decs = Object.values(store.decisions);
-    dom.statIncluded.textContent = decs.filter(v => v === 'IC').length;
-    dom.statExcluded.textContent = decs.filter(v => v === 'EC').length;
-}
-
-function saveDecisions() { localStorage.setItem('sensus_w_decisions', JSON.stringify(store.decisions)); }
-function loadDecisions() { 
-    const saved = localStorage.getItem('sensus_w_decisions');
-    if (saved) store.decisions = JSON.parse(saved); 
-}
-
-// --- 9. Exportação Profissional (Padrão Scopus/MLR) ---
+// --- 8. Exportação e Persistência ---
 
 function exportCSV() {
-    updateStatus('Preparando exportação enriquecida...');
+    updateStatus('Preparando exportação Scopus...');
     
-    const headers = ["Paper ID", "Decision", "Year", "Title", "Authors", "Abstract", "URL", "Source", "Export Date"];
+    // 1. Cabeçalhos no Padrão Scopus
+    const headers = [
+        "Authors", "Title", "Year", "Source title", "Link", 
+        "Abstract", "Author Keywords", "Language of Original Document", "Document Type"
+    ];
 
-    const exportRows = Object.entries(store.decisions).map(([id, decision]) => {
-        const p = store.corpus.find(item => String(item.id) === String(id));
-        
-        let authStr = "N/A";
-        if (p?.authors && Array.isArray(p.authors)) {
-            authStr = p.authors.map(a => a.Name || a.name || "Unknown").join("; ");
-        }
+    // 2. Determina o que exportar: Marcados ou, se nenhum marcado, todos os retornados na busca
+    const selectedIds = Object.keys(store.selected);
+    const papersToExport = selectedIds.length > 0 
+        ? store.filtered.filter(p => selectedIds.includes(String(p.id)))
+        : store.filtered;
 
-        return [
-            id,
-            decision,
-            p?.year || "N/A",
-            p?.title || "Untitled",
-            authStr,
-            p?.abstract || "No abstract",
-            p?.link || "",
-            "Workshop WASHES (via sensus-WASHES)",
-            new Date().toISOString().split('T')[0]
-        ];
-    });
-
-    if (exportRows.length === 0) {
-        showError("Nenhuma decisão para exportar.");
+    if (papersToExport.length === 0) {
+        showError("Nada para exportar.");
         return;
     }
 
+    // 3. Formatação
     const csvContent = [
-        headers.join(","),
-        ...exportRows.map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(","))
+        headers.map(h => `"${h}"`).join(","),
+        ...papersToExport.map(p => {
+            const authorsStr = (p.authors && Array.isArray(p.authors)) 
+                ? p.authors.map(a => a.Name || a.name || "Unknown").join("; ") 
+                : "N/A";
+            
+            const fields = [
+                authorsStr,
+                p.title,
+                p.year,
+                "Anais do Workshop sobre Aspectos Sociais, Humanos e Econômicos de Software (WASHES)",
+                p.link,
+                p.abstract,
+                p.keywords,
+                p.language,
+                p.type
+            ];
+            return fields.map(f => `"${String(f || '').replace(/"/g, '""')}"`).join(",");
+        })
     ].join("\n");
 
     const blob = new Blob(["\ufeff" + csvContent], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement("a");
-    link.href = URL.createObjectURL(blob);
-    link.download = `sensus-washes-audit-${new Date().toISOString().slice(0,10)}.csv`;
-    link.click();
-    updateStatus('Exportação concluída.');
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `sensusWASHES_Scopus_${new Date().toISOString().slice(0,10)}.csv`;
+    a.click();
+    updateStatus(`Exportados ${papersToExport.length} documentos.`);
 }
 
 function exportJSON() {
-    const data = { metadata: { tool: "sensus-WASHES", date: new Date() }, decisions: store.decisions };
+    const data = { metadata: { tool: "sensus-WASHES", date: new Date() }, selected: store.selected };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-    const link = document.createElement("a");
-    link.href = URL.createObjectURL(blob);
-    link.download = `sensus-washes-backup.json`;
-    link.click();
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `sensus-backup.json`;
+    a.click();
 }
 
-// --- 10. Feedback de Interface ---
+function updateStats() {
+    if(dom.statTotal) dom.statTotal.textContent = store.corpus.length;
+    if(dom.statFiltered) dom.statFiltered.textContent = store.filtered.length;
+    if(dom.statSelected) dom.statSelected.textContent = Object.keys(store.selected).length;
+}
+
+function saveSelection() { localStorage.setItem('sensus_w_selection', JSON.stringify(store.selected)); }
+function loadSelection() { 
+    const saved = localStorage.getItem('sensus_w_selection');
+    if (saved) store.selected = JSON.parse(saved); 
+}
+
 function updateStatus(m) { dom.statusBox.textContent = m; }
 function showError(m) { dom.errorBox.textContent = m; dom.errorBox.classList.remove('hidden'); }
 function clearError() { dom.errorBox.classList.add('hidden'); }
