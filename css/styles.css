@@ -1,0 +1,260 @@
+/* ==========================================================================
+   sensus-WASHES | Advanced Research Screening Tool
+   Arquivo: css/styles.css
+   Foco: Densidade de Informação, Highlighting e Auditoria Visual
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   1. Design Tokens (Variáveis Semânticas)
+   -------------------------------------------------------------------------- */
+:root {
+  /* Cores de Superfície e Fundo */
+  --bg-app: #f8fafc;              /* slate-50 */
+  --bg-surface: #ffffff;          /* white */
+  --bg-surface-hover: #f1f5f9;    /* slate-100 */
+
+  /* Tipografia Científica */
+  --text-main: #0f172a;           /* slate-900 (Títulos) */
+  --text-muted: #334155;          /* slate-700 (Abstracts) */
+  --text-subtle: #64748b;         /* slate-500 (Metadados) */
+
+  /* Bordas e Divisores */
+  --border-light: #e2e8f0;        /* slate-200 */
+  --border-strong: #cbd5e1;       /* slate-300 */
+
+  /* Cores de Triagem Metodológica (IC / EC) */
+  --color-ic: #10b981;            /* emerald-500 */
+  --bg-ic: #ecfdf5;               /* emerald-50 */
+  --border-ic: #a7f3d0;           /* emerald-200 */
+
+  --color-ec: #f43f5e;            /* rose-500 */
+  --bg-ec: #fff1f2;               /* rose-50 */
+  --border-ec: #fecdd3;           /* rose-200 */
+
+  /* Transições e Sombras */
+  --transition-fast: all 0.15s ease-in-out;
+  --shadow-card: 0 1px 3px rgba(15, 23, 42, 0.05);
+  --radius-card: 0.5rem;          /* Reduzido para um visual mais técnico */
+}
+
+/* --------------------------------------------------------------------------
+   2. Global & Scrollbars (Para não poluir a tela de leitura)
+   -------------------------------------------------------------------------- */
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background-color: var(--bg-app);
+  color: var(--text-main);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Scrollbar Customizada (Fina e Discreta) */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background-color: var(--border-strong);
+  border-radius: 10px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background-color: var(--text-subtle);
+}
+
+/* --------------------------------------------------------------------------
+   3. Estrutura do Card de Resultado (Alta Densidade)
+   -------------------------------------------------------------------------- */
+.paper-card {
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-card);
+  padding: 1rem 1.25rem; /* Padding reduzido para caber mais resultados */
+  box-shadow: var(--shadow-card);
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  transition: var(--transition-fast);
+  animation: fade-in 0.3s ease-out forwards;
+}
+
+.paper-card:hover {
+  border-color: var(--border-strong);
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
+}
+
+/* Metadados (ID, Ano, etc) */
+.paper-meta {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.7rem;
+  color: var(--text-subtle);
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* Título e Abstract */
+.paper-title {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--text-main);
+  line-height: 1.3;
+}
+
+.paper-abstract {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  line-height: 1.6;
+  text-align: justify;
+}
+
+/* --------------------------------------------------------------------------
+   4. Highlighting Dinâmico (Redução de Carga Cognitiva)
+   -------------------------------------------------------------------------- */
+mark {
+  background-color: rgba(253, 224, 71, 0.4); /* yellow-300 com opacidade */
+  color: #854d0e;                            /* yellow-800 */
+  font-weight: 600;
+  padding: 0.05em 0.2em;
+  border-radius: 2px;
+  box-shadow: 0 1px 0 rgba(253, 224, 71, 0.8);
+}
+
+/* --------------------------------------------------------------------------
+   5. Estados Visuais: Inclusão e Exclusão (Audit-Friendly)
+   -------------------------------------------------------------------------- */
+/* Artigo Incluído */
+.paper-included {
+  border-left: 4px solid var(--color-ic);
+  background-color: var(--bg-surface);
+}
+.paper-included .paper-title {
+  color: #065f46; /* emerald-900 */
+}
+
+/* Artigo Excluído (Melhorado para não impedir a re-leitura) */
+.paper-excluded {
+  border-left: 4px solid var(--color-ec);
+  background-color: #f8fafc; /* Fundo levemente acinzentado */
+  border-right-color: transparent;
+  border-top-color: transparent;
+  border-bottom-color: transparent;
+  box-shadow: none;
+}
+
+.paper-excluded .paper-title {
+  color: var(--text-subtle);
+  text-decoration: line-through; /* Risco visual clássico de exclusão */
+  text-decoration-color: var(--color-ec);
+}
+
+.paper-excluded .paper-abstract {
+  color: #94a3b8; /* slate-400 */
+}
+
+.paper-excluded mark {
+  background-color: #e2e8f0; /* Tira o amarelo vivo se já foi excluído */
+  color: var(--text-subtle);
+  box-shadow: none;
+}
+
+/* --------------------------------------------------------------------------
+   6. Botões de Ação Metodológica (IC / EC)
+   -------------------------------------------------------------------------- */
+.paper-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.25rem;
+  border-top: 1px dashed var(--border-light);
+  padding-top: 0.75rem;
+}
+
+.btn-action {
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 0.35rem 0.75rem;
+  border-radius: 0.25rem;
+  cursor: pointer;
+  transition: var(--transition-fast);
+  border: 1px solid transparent;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+/* Botão Include */
+.btn-ic {
+  background-color: var(--bg-ic);
+  color: var(--color-ic);
+  border-color: var(--border-ic);
+}
+.btn-ic:hover, .btn-ic.active {
+  background-color: var(--color-ic);
+  color: white;
+}
+
+/* Botão Exclude */
+.btn-ec {
+  background-color: var(--bg-ec);
+  color: var(--color-ec);
+  border-color: var(--border-ec);
+}
+.btn-ec:hover, .btn-ec.active {
+  background-color: var(--color-ec);
+  color: white;
+}
+
+/* --------------------------------------------------------------------------
+   7. Animações
+   -------------------------------------------------------------------------- */
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* --------------------------------------------------------------------------
+   8. Print & Audit Mode (Para Relatórios)
+   -------------------------------------------------------------------------- */
+@media print {
+  body {
+    background: white;
+    font-size: 10pt;
+  }
+
+  /* Esconde barras laterais e cabeçalho na impressão */
+  header, aside, .paper-actions, textarea, button {
+    display: none !important;
+  }
+
+  main, section {
+    overflow: visible !important;
+    height: auto !important;
+    padding: 0 !important;
+  }
+
+  .paper-card {
+    break-inside: avoid;
+    box-shadow: none;
+    border: 1px solid #000;
+    margin-bottom: 1rem;
+    padding: 1rem;
+  }
+
+  .paper-excluded .paper-title {
+    text-decoration: line-through;
+  }
+}
