@@ -1,6 +1,6 @@
 /**
- * sensus-WASHES | UI Orchestrator (v3.1 - Global Export Fix)
- * Responsabilidade: Gerenciar buscas, persistência global e exportação acumulada.
+ * sensus-WASHES | UI Orchestrator (v3.2 - Selection Management)
+ * Responsabilidade: Motor de Busca, Exportação Acumulada e Gestão de Sessão.
  * Paradigma: Scopus Scientific Engine.
  */
 
@@ -9,10 +9,10 @@ import { buildPredicate } from './parser.js';
 
 // --- 1. Estado Global da Aplicação ---
 const store = {
-    corpus: [],          // Base total carregada da API (Memória Global)
-    filtered: [],        // Artigos visíveis após a busca booleana atual
-    selected: {},        // { [id]: true } - Seleção acumulada (Persistente)
-    currentTerms: [],    // Termos extraídos para o Highlighter
+    corpus: [],          // Base total carregada da API
+    filtered: [],        // Artigos visíveis na busca atual
+    selected: {},        // { [id]: true } - Seleção persistente acumulada
+    currentTerms: [],    // Termos para o Highlighter
     editions: []         // Cache de edições para a Sidebar
 };
 
@@ -47,7 +47,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         populateFilterSelectors();
 
         await syncDataWithAPI(true); 
-        updateStatus('Pronto para triagem científica.');
+        updateStatus('Pronto para triagem.');
     } catch (err) {
         showError(`Falha na inicialização: ${err.message}`);
     }
@@ -75,7 +75,7 @@ async function syncDataWithAPI(isInitial = false) {
     const editionId = dom.editionFilter.value;
     
     clearError();
-    updateStatus('Atualizando acervo global...');
+    updateStatus('Atualizando acervo...');
 
     try {
         let rawData;
@@ -90,7 +90,7 @@ async function syncDataWithAPI(isInitial = false) {
         else renderEmptyState();
 
     } catch (err) {
-        showError(`Erro ao sincronizar: ${err.message}`);
+        showError(`Erro de sincronização: ${err.message}`);
     }
 }
 
@@ -128,7 +128,7 @@ function populateFilterSelectors() {
     for (let y = 2025; y >= 2016; y--) dom.yearFilter.add(new Option(y, y));
 }
 
-// --- 5. Busca e Highlighting ---
+// --- 5. Motor de Busca e Highlighting ---
 
 function handleSearch() {
     const query = dom.searchInput.value.trim();
@@ -138,7 +138,6 @@ function handleSearch() {
         store.filtered = [];
         store.currentTerms = [];
         renderEmptyState();
-        updateStatus('Aguardando query...');
         return;
     }
 
@@ -151,9 +150,9 @@ function handleSearch() {
 
         renderResults();
         updateStats();
-        updateStatus(`${store.filtered.length} resultados na busca atual.`);
+        updateStatus(`${store.filtered.length} resultados.`);
     } catch (err) {
-        showError(`Erro na string: ${err.message}`);
+        showError(`Sintaxe: ${err.message}`);
     }
 }
 
@@ -177,7 +176,7 @@ function renderResults() {
 
     if (store.filtered.length === 0) {
         dom.resultsToolbar.classList.add('hidden');
-        dom.resultsContainer.innerHTML = `<p class="text-center py-10 text-slate-500 text-sm italic">Nenhum documento encontrado para esta busca.</p>`;
+        dom.resultsContainer.innerHTML = `<p class="text-center py-10 text-slate-500 text-sm italic">Nenhum resultado para esta busca.</p>`;
         return;
     }
 
@@ -185,13 +184,13 @@ function renderResults() {
     const allVisibleIds = store.filtered.map(p => String(p.id));
     const isAllSelected = allVisibleIds.length > 0 && allVisibleIds.every(id => store.selected[id]);
     dom.selectAllCheckbox.checked = isAllSelected;
-    dom.selectAllText.textContent = isAllSelected ? "Desmarcar todos os visíveis" : `Selecionar todos os ${store.filtered.length} visíveis`;
+    dom.selectAllText.textContent = isAllSelected ? "Desmarcar visíveis" : `Selecionar ${store.filtered.length} visíveis`;
 
     store.filtered.forEach(paper => {
         const isSelected = store.selected[paper.id];
         const card = document.createElement('article');
         card.id = `card-${paper.id}`;
-        card.className = `paper-card transition-all duration-200 ${isSelected ? 'ring-2 ring-sky-500 bg-sky-50/30' : ''}`;
+        card.className = `paper-card transition-all duration-200 ${isSelected ? 'ring-2 ring-sky-500 bg-sky-50/30 shadow-md' : ''}`;
         
         card.innerHTML = `
             <div class="paper-meta flex justify-between">
@@ -212,10 +211,10 @@ function renderResults() {
 
 function renderEmptyState() {
     dom.resultsToolbar.classList.add('hidden');
-    dom.resultsContainer.innerHTML = `<div class="flex flex-col items-center justify-center py-20 text-slate-400"><p class="text-sm italic">Insira os termos de busca para iniciar a triagem...</p></div>`;
+    dom.resultsContainer.innerHTML = `<div class="flex flex-col items-center justify-center py-20 text-slate-400"><p class="text-sm italic">Insira os termos de busca...</p></div>`;
 }
 
-// --- 7. Gestão de Seleção (Global) ---
+// --- 7. Gestão de Seleção (Individual e Massa) ---
 
 window.toggleSelection = (id) => {
     id = String(id);
@@ -224,10 +223,9 @@ window.toggleSelection = (id) => {
 
     const card = document.getElementById(`card-${id}`);
     if (card) {
-        if (store.selected[id]) card.classList.add('ring-2', 'ring-sky-500', 'bg-sky-50/30');
-        else card.classList.remove('ring-2', 'ring-sky-500', 'bg-sky-50/30');
+        if (store.selected[id]) card.classList.add('ring-2', 'ring-sky-500', 'bg-sky-50/30', 'shadow-md');
+        else card.classList.remove('ring-2', 'ring-sky-500', 'bg-sky-50/30', 'shadow-md');
     }
-    
     saveSelection();
     updateStats();
 };
@@ -244,25 +242,37 @@ window.toggleSelectAll = () => {
     updateStats();
 };
 
-// --- 8. Exportação Global (SOLUÇÃO DO PROBLEMA) ---
+/**
+ * LIMPAR TODA A SELEÇÃO (NOVO)
+ * Remove todos os itens marcados da memória e do LocalStorage.
+ */
+window.clearSelection = () => {
+    if (Object.keys(store.selected).length === 0) return;
+    
+    if (confirm("Deseja remover todos os documentos da lista de exportação?")) {
+        store.selected = {};
+        saveSelection();
+        renderResults();
+        updateStats();
+        updateStatus("Seleção global reiniciada.");
+    }
+};
+
+// --- 8. Exportação Global ---
 
 function exportCSV() {
-    updateStatus('Preparando exportação acumulada...');
+    updateStatus('Exportando metadados acumulados...');
     
     const headers = ["Authors", "Title", "Year", "Source title", "Link", "Abstract", "Author Keywords", "Language of Original Document", "Document Type"];
     const selectedIds = Object.keys(store.selected);
 
-    /**
-     * LÓGICA CORRIGIDA:
-     * Se houver itens selecionados (acumulados no contador), buscamos no CORPUS INTEIRO.
-     * Isso garante que artigos de buscas anteriores sejam incluídos no CSV.
-     */
+    // Prioriza seleção global (acumulada) vs o que está na tela
     const papersToExport = selectedIds.length > 0 
         ? store.corpus.filter(p => selectedIds.includes(String(p.id)))
         : store.filtered;
 
     if (papersToExport.length === 0) {
-        showError("Nada selecionado para exportar.");
+        showError("Nada para exportar.");
         return;
     }
 
@@ -280,18 +290,20 @@ function exportCSV() {
     const blob = new Blob(["\ufeff" + csvContent], { type: 'text/csv;charset=utf-8;' });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    a.download = `sensusWASHES_Global_Export_${new Date().toISOString().slice(0,10)}.csv`;
+    a.download = `sensusWASHES_Export_${new Date().toISOString().slice(0,10)}.csv`;
     a.click();
-    updateStatus(`Sucesso: ${papersToExport.length} itens exportados.`);
+    updateStatus(`CSV gerado: ${papersToExport.length} itens.`);
 }
 
 function exportJSON() {
-    const data = { metadata: { tool: "sensus-WASHES" }, selected: store.selected };
+    const data = { metadata: { tool: "sensus-WASHES", date: new Date() }, selected: store.selected };
     const a = document.createElement("a");
     a.href = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
-    a.download = `sensus-session.json`;
+    a.download = `sensus-backup.json`;
     a.click();
 }
+
+// --- 9. Persistência e Feedback ---
 
 function updateStats() {
     if(dom.statTotal) dom.statTotal.textContent = store.corpus.length;
